@@ -15,30 +15,37 @@ export async function importKey(privateKey: string) {
     flag: 'w'
   });
 
+  const keyFingerprint = await importKeyFromPath(PRIVATE_KEY_FILE);
+
+  await io.rmRF(PRIVATE_KEY_FILE);
+
+  return keyFingerprint;
+}
+
+export async function importKeyFromPath(privateKeyPath: string) {
+  console.log(`from path: ${privateKeyPath}`);
   let output = '';
+  let error = '';
 
   const options: ExecOptions = {
-    silent: true,
+    silent: false,
     listeners: {
       stdout: (data: Buffer) => {
         output += data.toString();
+      },
+      stderr: (data: Buffer) => {
+        error += data.toString();
       }
     }
   };
 
   await exec.exec(
     'gpg',
-    [
-      '--batch',
-      '--import-options',
-      'import-show',
-      '--import',
-      PRIVATE_KEY_FILE
-    ],
+    ['--batch', '--import-options', 'import-show', '--import', privateKeyPath],
     options
   );
 
-  await io.rmRF(PRIVATE_KEY_FILE);
+  console.error(error);
 
   const match = output.match(PRIVATE_KEY_FINGERPRINT_REGEX);
   return match && match[0];

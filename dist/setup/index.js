@@ -25663,8 +25663,10 @@ exports.INPUT_SERVER_ID = 'server-id';
 exports.INPUT_SERVER_USERNAME = 'server-username';
 exports.INPUT_SERVER_PASSWORD = 'server-password';
 exports.INPUT_SETTINGS_PATH = 'settings-path';
+exports.INPUT_GPG_PRIVATE_KEY_PATH = 'gpg-private-key-path';
 exports.INPUT_GPG_PRIVATE_KEY = 'gpg-private-key';
 exports.INPUT_GPG_PASSPHRASE = 'gpg-passphrase';
+exports.INPUT_DEFAULT_GPG_PRIVATE_KEY_PATH = undefined;
 exports.INPUT_DEFAULT_GPG_PRIVATE_KEY = undefined;
 exports.INPUT_DEFAULT_GPG_PASSPHRASE = 'GPG_PASSPHRASE';
 exports.STATE_GPG_PRIVATE_KEY_FINGERPRINT = 'gpg-private-key-fingerprint';
@@ -28699,18 +28701,26 @@ function run() {
             const password = core.getInput(constants.INPUT_SERVER_PASSWORD, {
                 required: false
             });
+            const gpgPrivateKeyPath = core.getInput(constants.INPUT_GPG_PRIVATE_KEY_PATH, { required: false }) ||
+                constants.INPUT_DEFAULT_GPG_PRIVATE_KEY_PATH;
             const gpgPrivateKey = core.getInput(constants.INPUT_GPG_PRIVATE_KEY, { required: false }) ||
                 constants.INPUT_DEFAULT_GPG_PRIVATE_KEY;
             const gpgPassphrase = core.getInput(constants.INPUT_GPG_PASSPHRASE, { required: false }) ||
-                (gpgPrivateKey ? constants.INPUT_DEFAULT_GPG_PASSPHRASE : undefined);
+                (gpgPrivateKey || gpgPrivateKeyPath
+                    ? constants.INPUT_DEFAULT_GPG_PASSPHRASE
+                    : undefined);
             if (gpgPrivateKey) {
                 core.setSecret(gpgPrivateKey);
             }
             yield auth.configAuthentication(id, username, password, gpgPassphrase);
-            if (gpgPrivateKey) {
+            if (gpgPrivateKey || gpgPrivateKeyPath) {
                 core.info('importing private key');
-                const keyFingerprint = (yield gpg.importKey(gpgPrivateKey)) || '';
-                core.saveState(constants.STATE_GPG_PRIVATE_KEY_FINGERPRINT, keyFingerprint);
+                const keyFingerprint = gpgPrivateKey
+                    ? yield gpg.importKey(gpgPrivateKey)
+                    : gpgPrivateKeyPath
+                        ? yield gpg.importKeyFromPath(gpgPrivateKeyPath)
+                        : null;
+                core.saveState(constants.STATE_GPG_PRIVATE_KEY_FINGERPRINT, keyFingerprint || '');
             }
         }
         catch (error) {
@@ -32612,28 +32622,35 @@ function importKey(privateKey) {
             encoding: 'utf-8',
             flag: 'w'
         });
+        const keyFingerprint = yield importKeyFromPath(exports.PRIVATE_KEY_FILE);
+        yield io.rmRF(exports.PRIVATE_KEY_FILE);
+        return keyFingerprint;
+    });
+}
+exports.importKey = importKey;
+function importKeyFromPath(privateKeyPath) {
+    return __awaiter(this, void 0, void 0, function* () {
+        console.log(`from path: ${privateKeyPath}`);
         let output = '';
+        let error = '';
         const options = {
-            silent: true,
+            silent: false,
             listeners: {
                 stdout: (data) => {
                     output += data.toString();
+                },
+                stderr: (data) => {
+                    error += data.toString();
                 }
             }
         };
-        yield exec.exec('gpg', [
-            '--batch',
-            '--import-options',
-            'import-show',
-            '--import',
-            exports.PRIVATE_KEY_FILE
-        ], options);
-        yield io.rmRF(exports.PRIVATE_KEY_FILE);
+        yield exec.exec('gpg', ['--batch', '--import-options', 'import-show', '--import', privateKeyPath], options);
+        console.error(error);
         const match = output.match(PRIVATE_KEY_FINGERPRINT_REGEX);
         return match && match[0];
     });
 }
-exports.importKey = importKey;
+exports.importKeyFromPath = importKeyFromPath;
 function deleteKey(keyFingerprint) {
     return __awaiter(this, void 0, void 0, function* () {
         yield exec.exec('gpg', ['--batch', '--yes', '--delete-secret-keys', keyFingerprint], { silent: true });
